@@ -1,5 +1,5 @@
-_BASE_: Base-Cityscapes-PanopticSegmentation.yaml
-OUTPUT_DIR: "output/mask2former_R50_bs16_90k"
+_BASE_: Base-Cityscapes-PanopticSegmentation-CropSampling.yaml
+OUTPUT_DIR: "output/mask2former_R50_bs16_90k_ibs_cropsampling"
 MODEL:
   META_ARCHITECTURE: "MaskFormer"
   SEM_SEG_HEAD:
@@ -37,6 +37,9 @@ MODEL:
     TRAIN_NUM_POINTS: 12544
     OVERSAMPLE_RATIO: 3.0
     IMPORTANCE_SAMPLE_RATIO: 0.75
+    APPLY_IBS: True
+    IBS_WEIGHT: 50.0
+    IBS_POINT_SAMPLING: True
     TEST:
       SEMANTIC_ON: True
       INSTANCE_ON: True

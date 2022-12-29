@@ -63,6 +63,10 @@ def add_maskformer2_config(cfg):
     # you can use this config to override
     cfg.MODEL.MASK_FORMER.SIZE_DIVISIBILITY = 32
 
+    cfg.MODEL.MASK_FORMER.IBS_POINT_SAMPLING = False
+    cfg.MODEL.MASK_FORMER.APPLY_IBS = False
+    cfg.MODEL.MASK_FORMER.IBS_WEIGHT = 0.
+
     # pixel decoder config
     cfg.MODEL.SEM_SEG_HEAD.MASK_DIM = 256
     # adding transformer in pixel decoder
@@ -112,3 +116,16 @@ def add_maskformer2_config(cfg):
     # Importance sampling parameter for PointRend point sampling during training. Parametr `beta` in
     # the original paper.
     cfg.MODEL.MASK_FORMER.IMPORTANCE_SAMPLE_RATIO = 0.75
+
+    cfg.DATASETS.NAME = 'Cityscapes'
+
+    cfg.INPUT.CROP.WITH_INSTANCE = False
+    cfg.INPUT.NEW_SAMPLING = False
+    cfg.INPUT.SCALE_OPTIONS = [32, 64, 128, 256, 512]
+    cfg.INPUT.NEW_SAMPLING_SHORTEST_SIDE_MIN = 1024
+    cfg.INPUT.NEW_SAMPLING_SHORTEST_SIDE_MAX = 6192
+    cfg.INPUT.NEW_SAMPLING_OVERALL_MAX_SIZE = 9288
+
+    cfg.SAVE_DIR = "predictions"
+    cfg.SAVE_DIR_NAME = ""
+    cfg.SAVE_PREDICTIONS = False

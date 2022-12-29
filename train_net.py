@@ -53,6 +53,7 @@ from mask2former import (
     InstanceSegEvaluator,
     MaskFormerInstanceDatasetMapper,
     MaskFormerPanopticDatasetMapper,
+    MaskFormerPanopticDatasetMapperCropSampling,
     MaskFormerSemanticDatasetMapper,
     SemanticSegmentorWithTTA,
     add_maskformer2_config,
@@ -108,6 +109,8 @@ class Trainer(DefaultTrainer):
             evaluator_list.append(InstanceSegEvaluator(dataset_name, output_dir=output_folder))
         if evaluator_type == "mapillary_vistas_panoptic_seg" and cfg.MODEL.MASK_FORMER.TEST.SEMANTIC_ON:
             evaluator_list.append(SemSegEvaluator(dataset_name, distributed=True, output_dir=output_folder))
+        if evaluator_type == "mapillary_vistas_instance_seg" and cfg.MODEL.MASK_FORMER.TEST.INSTANCE_ON:
+            evaluator_list.append(InstanceSegEvaluator(dataset_name, output_dir=output_folder))
         # Cityscapes
         if evaluator_type == "cityscapes_instance":
             assert (
@@ -155,6 +158,10 @@ class Trainer(DefaultTrainer):
         # Panoptic segmentation dataset mapper
         elif cfg.INPUT.DATASET_MAPPER_NAME == "mask_former_panoptic":
             mapper = MaskFormerPanopticDatasetMapper(cfg, True)
+            return build_detection_train_loader(cfg, mapper=mapper)
+        # Panoptic segmentation dataset mapper with new crop sampling
+        elif cfg.INPUT.DATASET_MAPPER_NAME == "mask_former_panoptic_cropsampling":
+            mapper = MaskFormerPanopticDatasetMapperCropSampling(cfg, True)
             return build_detection_train_loader(cfg, mapper=mapper)
         # Instance segmentation dataset mapper
         elif cfg.INPUT.DATASET_MAPPER_NAME == "mask_former_instance":
@@ -298,6 +305,19 @@ def setup(args):
 def main(args):
     cfg = setup(args)
 
+    if cfg.INPUT.NEW_SAMPLING:
+        # Convert batch size for compatibility with new crop sampling (which outputs 2 samples instead of 1)
+        assert cfg.SOLVER.IMS_PER_BATCH % 2 == 0
+        cfg.SOLVER.defrost()
+        cfg.SOLVER.IMS_PER_BATCH = cfg.SOLVER.IMS_PER_BATCH // 2
+        cfg.SOLVER.freeze()
+
+    if cfg.SAVE_PREDICTIONS:
+        if comm.is_main_process():
+            save_dir = os.path.join(cfg.SAVE_DIR, cfg.SAVE_DIR_NAME)
+            if not os.path.exists(save_dir):
+                os.mkdir(save_dir)
+
     if args.eval_only:
         model = Trainer.build_model(cfg)
         DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
@@ -317,12 +337,15 @@ def main(args):
 
 if __name__ == "__main__":
     args = default_argument_parser().parse_args()
-    print("Command Line Args:", args)
+    if args.machine_rank == -1:
+        machine_rank = int(os.environ['SLURM_PROCID'])
+    else:
+        machine_rank = args.machine_rank
     launch(
         main,
         args.num_gpus,
         num_machines=args.num_machines,
-        machine_rank=args.machine_rank,
+        machine_rank=machine_rank,
         dist_url=args.dist_url,
         args=(args,),
     )

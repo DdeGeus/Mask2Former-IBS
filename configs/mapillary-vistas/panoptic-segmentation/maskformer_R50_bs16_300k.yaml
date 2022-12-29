@@ -1,4 +1,5 @@
 _BASE_: Base-MapillaryVistas-PanopticSegmentation.yaml
+OUTPUT_DIR: "output/mask2formerR50_bs16_300k"
 MODEL:
   META_ARCHITECTURE: "MaskFormer"
   SEM_SEG_HEAD:

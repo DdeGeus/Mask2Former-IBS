@@ -9,7 +9,7 @@ from torch.nn import functional as F
 from detectron2.config import configurable
 from detectron2.data import detection_utils as utils
 from detectron2.data import transforms as T
-from detectron2.structures import BitMasks, Instances
+from detectron2.structures import BitMasks, Instances, BoxMode
 
 from .mask_former_semantic_dataset_mapper import MaskFormerSemanticDatasetMapper
 
@@ -144,10 +144,12 @@ class MaskFormerPanopticDatasetMapper(MaskFormerSemanticDatasetMapper):
         classes = []
         masks = []
         for segment_info in segments_info:
-            class_id = segment_info["category_id"]
-            if not segment_info["iscrowd"]:
-                classes.append(class_id)
-                masks.append(pan_seg_gt == segment_info["id"])
+            mask = pan_seg_gt == segment_info["id"]
+            if np.sum(mask) > 1:
+                class_id = segment_info["category_id"]
+                if not segment_info["iscrowd"]:
+                    classes.append(class_id)
+                    masks.append(pan_seg_gt == segment_info["id"])
 
         classes = np.array(classes)
         instances.gt_classes = torch.tensor(classes, dtype=torch.int64)

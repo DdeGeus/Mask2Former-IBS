@@ -13,6 +13,8 @@ from detectron2.data import transforms as T
 from detectron2.projects.point_rend import ColorAugSSDTransform
 from detectron2.structures import BitMasks, Instances
 
+from .augmentations import RandomCropWithInstance, ResizeShortestEdgeAdaptive
+
 __all__ = ["MaskFormerSemanticDatasetMapper"]
 
 
@@ -61,22 +63,39 @@ class MaskFormerSemanticDatasetMapper:
     @classmethod
     def from_config(cls, cfg, is_train=True):
         # Build augmentation
-        augs = [
-            T.ResizeShortestEdge(
-                cfg.INPUT.MIN_SIZE_TRAIN,
-                cfg.INPUT.MAX_SIZE_TRAIN,
-                cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING,
-            )
-        ]
-        if cfg.INPUT.CROP.ENABLED:
-            augs.append(
-                T.RandomCrop_CategoryAreaConstraint(
-                    cfg.INPUT.CROP.TYPE,
-                    cfg.INPUT.CROP.SIZE,
-                    cfg.INPUT.CROP.SINGLE_CATEGORY_MAX_AREA,
-                    cfg.MODEL.SEM_SEG_HEAD.IGNORE_VALUE,
+        if cfg.INPUT.NEW_SAMPLING:
+            augs = [
+                ResizeShortestEdgeAdaptive(
+                    cfg.INPUT.MIN_SIZE_TRAIN,
+                    cfg.INPUT.MAX_SIZE_TRAIN,
+                    cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING,
                 )
-            )
+            ]
+        else:
+            augs = [
+                T.ResizeShortestEdge(
+                    cfg.INPUT.MIN_SIZE_TRAIN,
+                    cfg.INPUT.MAX_SIZE_TRAIN,
+                    cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING,
+                )
+            ]
+        if cfg.INPUT.CROP.ENABLED:
+            if not cfg.INPUT.CROP.WITH_INSTANCE:
+                augs.append(
+                    T.RandomCrop_CategoryAreaConstraint(
+                        cfg.INPUT.CROP.TYPE,
+                        cfg.INPUT.CROP.SIZE,
+                        cfg.INPUT.CROP.SINGLE_CATEGORY_MAX_AREA,
+                        cfg.MODEL.SEM_SEG_HEAD.IGNORE_VALUE,
+                    )
+                )
+            else:
+                augs.append(
+                    RandomCropWithInstance(
+                        cfg.INPUT.CROP.TYPE,
+                        cfg.INPUT.CROP.SIZE,
+                    )
+                )
         if cfg.INPUT.COLOR_AUG_SSD:
             augs.append(ColorAugSSDTransform(img_format=cfg.INPUT.FORMAT))
         augs.append(T.RandomFlip())

@@ -1,11 +1,11 @@
-_BASE_: Base-Cityscapes-PanopticSegmentation.yaml
-OUTPUT_DIR: "output/mask2former_R50_bs16_90k"
+_BASE_: Base-MapillaryVistas-PanopticSegmentation-CropSampling.yaml
+OUTPUT_DIR: "output/mask2formerR50_bs16_300k_ibs_cropsampling"
 MODEL:
   META_ARCHITECTURE: "MaskFormer"
   SEM_SEG_HEAD:
     NAME: "MaskFormerHead"
-    IGNORE_VALUE: 255
-    NUM_CLASSES: 19
+    IGNORE_VALUE: 65
+    NUM_CLASSES: 65
     LOSS_WEIGHT: 1.0
     CONVS_DIM: 256
     MASK_DIM: 256
@@ -37,9 +37,12 @@ MODEL:
     TRAIN_NUM_POINTS: 12544
     OVERSAMPLE_RATIO: 3.0
     IMPORTANCE_SAMPLE_RATIO: 0.75
+    IBS_WEIGHT: 100.0
+    IBS_POINT_SAMPLING: True
+    APPLY_IBS: True
     TEST:
       SEMANTIC_ON: True
-      INSTANCE_ON: True
+      INSTANCE_ON: False
       PANOPTIC_ON: True
       OVERLAP_THRESHOLD: 0.8
-      OBJECT_MASK_THRESHOLD: 0.8
+      OBJECT_MASK_THRESHOLD: 0.0

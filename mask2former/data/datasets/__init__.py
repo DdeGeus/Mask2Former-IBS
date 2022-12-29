@@ -7,4 +7,6 @@ from . import (
     register_coco_panoptic_annos_semseg,
     register_ade20k_instance,
     register_mapillary_vistas_panoptic,
+    register_mapillary_vistas_panoptic_cropsampling,
+    register_cityscapes_panoptic_cropsampling,
 )

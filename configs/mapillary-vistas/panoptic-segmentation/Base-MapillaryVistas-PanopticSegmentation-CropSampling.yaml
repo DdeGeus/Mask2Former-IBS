@@ -15,8 +15,8 @@ MODEL:
     RES5_MULTI_GRID: [1, 1, 1]  # not used
 DATASETS:
   NAME: "Mapillary"
-  TRAIN: ("mapillary_vistas_panoptic_train",)
-  TEST: ("mapillary_vistas_panoptic_val",)
+  TRAIN: ("mapillary_vistas_panoptic_train_cropsampling",)
+  TEST: ("mapillary_vistas_panoptic_val_cropsampling",)
 SOLVER:
   IMS_PER_BATCH: 16
   BASE_LR: 0.0001
@@ -41,15 +41,21 @@ INPUT:
   MIN_SIZE_TEST: 2048
   MAX_SIZE_TRAIN: 8192
   MAX_SIZE_TEST: 2048
+  NEW_SAMPLING: True
+  NEW_SAMPLING_SHORTEST_SIDE_MIN: 1024
+  NEW_SAMPLING_SHORTEST_SIDE_MAX: 6192
+  NEW_SAMPLING_OVERALL_MAX_SIZE : 9288
+  SCALE_OPTIONS: [32, 64, 128, 256, 512]
   CROP:
     ENABLED: True
     TYPE: "absolute"
     SIZE: (1024, 1024)
     SINGLE_CATEGORY_MAX_AREA: 1.0
+    WITH_INSTANCE: True
   COLOR_AUG_SSD: True
   SIZE_DIVISIBILITY: 1024  # used in dataset mapper
   FORMAT: "RGB"
-  DATASET_MAPPER_NAME: "mask_former_panoptic"
+  DATASET_MAPPER_NAME: "mask_former_panoptic_cropsampling"
 TEST:
   EVAL_PERIOD: 0
 DATALOADER:

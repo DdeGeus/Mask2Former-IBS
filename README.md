@@ -1,20 +1,9 @@
-# Mask2Former: Masked-attention Mask Transformer for Universal Image Segmentation (CVPR 2022)
+# Mask2Former + Intra-Batch Supervision
+## [[Project page](https://ddegeus.github.io/intra-batch-supervision/)] [[Paper](#)]
 
-[Bowen Cheng](https://bowenc0221.github.io/), [Ishan Misra](https://imisra.github.io/), [Alexander G. Schwing](https://alexander-schwing.de/), [Alexander Kirillov](https://alexander-kirillov.github.io/), [Rohit Girdhar](https://rohitgirdhar.github.io/)
+Code for 'Intra-Batch Supervision for Panoptic Segmentation on High-Resolution Images', Daan de Geus and Gijs Dubbelman, WACV 2023.
 
-[[`arXiv`](https://arxiv.org/abs/2112.01527)] [[`Project`](https://bowenc0221.github.io/mask2former)] [[`BibTeX`](#CitingMask2Former)]
-
-<div align="center">
-  <img src="https://bowenc0221.github.io/images/maskformerv2_teaser.png" width="100%" height="100%"/>
-</div><br/>
-
-### Features
-* A single architecture for panoptic, instance and semantic segmentation.
-* Support major segmentation datasets: ADE20K, Cityscapes, COCO, Mapillary Vistas.
-
-## Updates
-* Add Google Colab demo.
-* Video instance segmentation is now supported! Please check our [tech report](https://arxiv.org/abs/2112.10764) for more details.
+This code applies Intra-Batch Supervision to [Mask2Former](https://arxiv.org/abs/2112.01527), and is built upon the [official Mask2Former code](https://github.com/facebookresearch/Mask2Former/).
 
 ## Installation
 
@@ -22,39 +11,127 @@ See [installation instructions](INSTALL.md).
 
 ## Getting Started
 
-See [Preparing Datasets for Mask2Former](datasets/README.md).
+* See [Preparing Datasets for Mask2Former](datasets/README.md).
+* See [Getting Started with Mask2Former](GETTING_STARTED.md).
+* To prepare the datasets for our crop sampling, run these two commands:
+  * `python mask2former/data/datasets/prepare_cityscapes_sampling.py`
+  * `python mask2former/data/datasets/prepare_mapillary_sampling.py`
 
-See [Getting Started with Mask2Former](GETTING_STARTED.md).
+  
+## Results
+Results and models on Cityscapes. 
 
-Run our demo using Colab: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1uIWE5KbGFSjrxey2aRd5pWkKNY1_SaNq)
+<table><tbody>
+<!-- START TABLE -->
+<!-- TABLE HEADER -->
+<th valign="bottom">Method</th>
+<th valign="bottom">Crop sampling</th>
+<th valign="bottom">Backbone</th>
+<th valign="bottom">Iters</th>
+<th valign="bottom">PQ</th>
+<th valign="bottom">PQ_th</th>
+<th valign="bottom">PQ_st</th>
+<th valign="bottom">Acc_th</th>
+<th valign="bottom">Prec_th</th>
+<th valign="bottom">config</th>
+<th valign="bottom">model</th>
+<!-- TABLE BODY -->
+<tr><td align="left">Mask2Former</td>
+<td align="center">no</td>
+<td align="center">R50</td>
+<td align="center">90k</td>
+<td align="center">62.1</td>
+<td align="center">55.2</td>
+<td align="center">67.2</td>
+<td align="center">87.1</td>
+<td align="center">93.3</td>
+<td align="center"><a href="configs/cityscapes/panoptic-segmentation/maskformer2_R50_bs16_90k.yaml">config</a>
+<td align="center">TBD</td>
+</tr>
+<tr><td align="left">Mask2Former + IBS </td>
+<td align="center">yes</td>
+<td align="center">R50</td>
+<td align="center">90k</td>
+<td align="center">62.4</td>
+<td align="center">55.7</td>
+<td align="center">67.3</td>
+<td align="center">87.6</td>
+<td align="center">94.1</td>
+<td align="center"><a href="configs/cityscapes/panoptic-segmentation/maskformer2_R50_bs16_90k_ibs_cropsampling.yaml">config</a></td>
+<td align="center">TBD</td>
+</tr>
+</tbody></table>
 
-Integrated into [Huggingface Spaces 🤗](https://huggingface.co/spaces) using [Gradio](https://github.com/gradio-app/gradio). Try out the Web Demo: [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/akhaliq/Mask2Former)
+Results and models on Mapillary Vistas.
 
-Replicate web demo and docker image is available here: [![Replicate](https://replicate.com/facebookresearch/mask2former/badge)](https://replicate.com/facebookresearch/mask2former)
+<table><tbody>
+<!-- START TABLE -->
+<!-- TABLE HEADER -->
+<th valign="bottom">Method</th>
+<th valign="bottom">Crop sampling</th>
+<th valign="bottom">Backbone</th>
+<th valign="bottom">Iters</th>
+<th valign="bottom">PQ</th>
+<th valign="bottom">PQ_th</th>
+<th valign="bottom">PQ_st</th>
+<th valign="bottom">Acc_th</th>
+<th valign="bottom">Prec_th</th>
+<th valign="bottom">config</th>
+<th valign="bottom">model</th>
+<!-- TABLE BODY -->
+<tr><td align="left">Mask2Former</td>
+<td align="center">no</td>
+<td align="center">R50</td>
+<td align="center">300k</td>
+<td align="center">41.5</td>
+<td align="center">33.3</td>
+<td align="center">52.4</td>
+<td align="center">71.7</td>
+<td align="center">78.8</td>
+<td align="center"><a href="configs/mapillary-vistas/panoptic-segmentation/maskformer_R50_bs16_300k.yaml">config</a>
+<td align="center">TBD</td>
+</tr>
+<tr><td align="left">Mask2Former + IBS </td>
+<td align="center">yes</td>
+<td align="center">R50</td>
+<td align="center">300k</td>
+<td align="center">42.2</td>
+<td align="center">34.9</td>
+<td align="center">52.0</td>
+<td align="center">75.7</td>
+<td align="center">84.1</td>
+<td align="center"><a href="configs/mapillary-vistas/panoptic-segmentation/maskformer_R50_bs16_300k_ibs_cropsampling.yaml">config</a></td>
+<td align="center">TBD</td>
+</tr>
+</tbody></table>
 
-## Advanced usage
 
-See [Advanced Usage of Mask2Former](ADVANCED_USAGE.md).
-
-## Model Zoo and Baselines
-
-We provide a large set of baseline results and trained models available for download in the [Mask2Former Model Zoo](MODEL_ZOO.md).
 
 ## License
 
 Shield: [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-The majority of Mask2Former is licensed under a [MIT License](LICENSE).
-
+This code builds upon the [official Mask2Former code](https://github.com/facebookresearch/Mask2Former/). The majority of Mask2Former is licensed under a [MIT License](LICENSE).
 
 However portions of the project are available under separate license terms: Swin-Transformer-Semantic-Segmentation is licensed under the [MIT license](https://github.com/SwinTransformer/Swin-Transformer-Semantic-Segmentation/blob/main/LICENSE), Deformable-DETR is licensed under the [Apache-2.0 License](https://github.com/fundamentalvision/Deformable-DETR/blob/main/LICENSE).
 
-## <a name="CitingMask2Former"></a>Citing Mask2Former
+## <a name="Citing"></a>Citing us
 
-If you use Mask2Former in your research or wish to refer to the baseline results published in the [Model Zoo](MODEL_ZOO.md), please use the following BibTeX entry.
+Please consider citing our work if it is useful for your research.
+
+```
+@inproceedings{degeus2023ibs,
+  title={Intra-Batch Supervision for Panoptic Segmentation on High-Resolution Images},
+  author={{de Geus}, Daan and Dubbelman, Gijs},
+  booktitle={IEEE/CVF Winter Conference on Applications of Computer Vision (WACV)},
+  year={2023}
+}
+```
+
+If you use Mask2Former in your research or wish to refer to the baseline results published in the [Model Zoo](MODEL_ZOO.md), please also refer to the original Mask2Former paper.
 
 ```BibTeX
-@inproceedings{cheng2021mask2former,
+@inproceedings{cheng2022mask2former,
   title={Masked-attention Mask Transformer for Universal Image Segmentation},
   author={Bowen Cheng and Ishan Misra and Alexander G. Schwing and Alexander Kirillov and Rohit Girdhar},
   journal={CVPR},
@@ -62,17 +139,7 @@ If you use Mask2Former in your research or wish to refer to the baseline results
 }
 ```
 
-If you find the code useful, please also consider the following BibTeX entry.
-
-```BibTeX
-@inproceedings{cheng2021maskformer,
-  title={Per-Pixel Classification is Not All You Need for Semantic Segmentation},
-  author={Bowen Cheng and Alexander G. Schwing and Alexander Kirillov},
-  journal={NeurIPS},
-  year={2021}
-}
-```
 
 ## Acknowledgement
 
-Code is largely based on MaskFormer (https://github.com/facebookresearch/MaskFormer).
+Code is largely based on [Mask2Former](https://github.com/facebookresearch/Mask2Former/), which is largely based on MaskFormer (https://github.com/facebookresearch/MaskFormer).

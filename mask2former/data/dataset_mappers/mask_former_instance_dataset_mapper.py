@@ -113,9 +113,15 @@ class MaskFormerInstanceDatasetMapper:
             if obj.get("iscrowd", 0) == 0
         ]
 
-        if len(annos):
-            assert "segmentation" in annos[0]
-        segms = [obj["segmentation"] for obj in annos]
+        annos_filtered = list()
+        for anno in annos:
+            area = (anno['bbox'][2] - anno['bbox'][0]) * (anno['bbox'][3] - anno['bbox'][1])
+            if area > 1:
+                annos_filtered.append(anno)
+
+        if len(annos_filtered):
+            assert "segmentation" in annos_filtered[0]
+        segms = [obj["segmentation"] for obj in annos_filtered]
         masks = []
         for segm in segms:
             if isinstance(segm, list):
@@ -142,7 +148,7 @@ class MaskFormerInstanceDatasetMapper:
         image = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
         masks = [torch.from_numpy(np.ascontiguousarray(x)) for x in masks]
 
-        classes = [int(obj["category_id"]) for obj in annos]
+        classes = [int(obj["category_id"]) for obj in annos_filtered]
         classes = torch.tensor(classes, dtype=torch.int64)
 
         if self.size_divisibility > 0:
@@ -167,12 +173,18 @@ class MaskFormerInstanceDatasetMapper:
 
         # Prepare per-category binary masks
         instances = Instances(image_shape)
-        instances.gt_classes = classes
+        # Filter empty instance masks
         if len(masks) == 0:
             # Some image does not have annotation (all ignored)
+            instances.gt_classes = classes
             instances.gt_masks = torch.zeros((0, image.shape[-2], image.shape[-1]))
         else:
-            masks = BitMasks(torch.stack(masks))
+            masks = torch.stack(masks)
+            masks_sum = torch.sum(masks, dim=(1, 2))
+            masks_valid = masks_sum > 0
+            masks = masks[masks_valid, ...]
+            masks = BitMasks(masks)
+            instances.gt_classes = classes[masks_valid]
             instances.gt_masks = masks.tensor
 
         dataset_dict["instances"] = instances

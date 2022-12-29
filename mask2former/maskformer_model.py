@@ -1,6 +1,11 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 from typing import Tuple
 
+import os
+from PIL import Image
+import numpy as np
+import json
+
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -43,6 +48,11 @@ class MaskFormer(nn.Module):
         panoptic_on: bool,
         instance_on: bool,
         test_topk_per_image: int,
+        apply_ibs: bool,
+        save_dir: str,
+        save_dir_name: str,
+        save_predictions: bool,
+        cfg,
     ):
         """
         Args:
@@ -67,8 +77,10 @@ class MaskFormer(nn.Module):
             instance_on: bool, whether to output instance segmentation prediction
             panoptic_on: bool, whether to output panoptic segmentation prediction
             test_topk_per_image: int, instance segmentation parameter, keep topk instances per image
+            apply_ibs: bool, whether to apply intra-batch supervision
         """
         super().__init__()
+        self.cfg = cfg
         self.backbone = backbone
         self.sem_seg_head = sem_seg_head
         self.criterion = criterion
@@ -90,6 +102,12 @@ class MaskFormer(nn.Module):
         self.panoptic_on = panoptic_on
         self.test_topk_per_image = test_topk_per_image
 
+        # Extra
+        self.apply_ibs = apply_ibs
+        self.save_predictions = save_predictions
+        self.save_dir = save_dir
+        self.save_dir_name = save_dir_name
+
         if not self.semantic_on:
             assert self.sem_seg_postprocess_before_inference
 
@@ -106,6 +124,7 @@ class MaskFormer(nn.Module):
         class_weight = cfg.MODEL.MASK_FORMER.CLASS_WEIGHT
         dice_weight = cfg.MODEL.MASK_FORMER.DICE_WEIGHT
         mask_weight = cfg.MODEL.MASK_FORMER.MASK_WEIGHT
+        ibs_weight = cfg.MODEL.MASK_FORMER.IBS_WEIGHT
 
         # building criterion
         matcher = HungarianMatcher(
@@ -117,6 +136,9 @@ class MaskFormer(nn.Module):
 
         weight_dict = {"loss_ce": class_weight, "loss_mask": mask_weight, "loss_dice": dice_weight}
 
+        if cfg.MODEL.MASK_FORMER.APPLY_IBS:
+            weight_dict["loss_mask_ibs"] = ibs_weight
+
         if deep_supervision:
             dec_layers = cfg.MODEL.MASK_FORMER.DEC_LAYERS
             aux_weight_dict = {}
@@ -125,6 +147,9 @@ class MaskFormer(nn.Module):
             weight_dict.update(aux_weight_dict)
 
         losses = ["labels", "masks"]
+
+        dataset_names = cfg.DATASETS.TRAIN
+        meta = MetadataCatalog.get(dataset_names[0])
 
         criterion = SetCriterion(
             sem_seg_head.num_classes,
@@ -135,9 +160,15 @@ class MaskFormer(nn.Module):
             num_points=cfg.MODEL.MASK_FORMER.TRAIN_NUM_POINTS,
             oversample_ratio=cfg.MODEL.MASK_FORMER.OVERSAMPLE_RATIO,
             importance_sample_ratio=cfg.MODEL.MASK_FORMER.IMPORTANCE_SAMPLE_RATIO,
+            apply_ibs=cfg.MODEL.MASK_FORMER.APPLY_IBS,
+            ibs_point_sampling=cfg.MODEL.MASK_FORMER.IBS_POINT_SAMPLING,
+            dataset=cfg.DATASETS.NAME,
+            meta=meta,
+            num_dec_layers=cfg.MODEL.MASK_FORMER.DEC_LAYERS
         )
 
         return {
+            "cfg": cfg,
             "backbone": backbone,
             "sem_seg_head": sem_seg_head,
             "criterion": criterion,
@@ -158,6 +189,10 @@ class MaskFormer(nn.Module):
             "instance_on": cfg.MODEL.MASK_FORMER.TEST.INSTANCE_ON,
             "panoptic_on": cfg.MODEL.MASK_FORMER.TEST.PANOPTIC_ON,
             "test_topk_per_image": cfg.TEST.DETECTIONS_PER_IMAGE,
+            "apply_ibs": cfg.MODEL.MASK_FORMER.APPLY_IBS,
+            "save_dir": cfg.SAVE_DIR,
+            "save_dir_name": cfg.SAVE_DIR_NAME,
+            "save_predictions": cfg.SAVE_PREDICTIONS,
         }
 
     @property
@@ -190,6 +225,13 @@ class MaskFormer(nn.Module):
                     segments_info (list[dict]): Describe each segment in `panoptic_seg`.
                         Each dict contains keys "id", "category_id", "isthing".
         """
+        if self.cfg.INPUT.NEW_SAMPLING and self.training:
+            batched_inputs_new = list()
+            for x in batched_inputs:
+                for i in range(2):
+                    batched_inputs_new.append(x[i])
+            batched_inputs = batched_inputs_new
+
         images = [x["image"].to(self.device) for x in batched_inputs]
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
         images = ImageList.from_tensors(images, self.size_divisibility)
@@ -226,8 +268,6 @@ class MaskFormer(nn.Module):
                 align_corners=False,
             )
 
-            del outputs
-
             processed_results = []
             for mask_cls_result, mask_pred_result, input_per_image, image_size in zip(
                 mask_cls_results, mask_pred_results, batched_inputs, images.image_sizes
@@ -253,6 +293,20 @@ class MaskFormer(nn.Module):
                 if self.panoptic_on:
                     panoptic_r = retry_if_cuda_oom(self.panoptic_inference)(mask_cls_result, mask_pred_result)
                     processed_results[-1]["panoptic_seg"] = panoptic_r
+
+                    if self.save_predictions:
+                        panoptic_pred = panoptic_r[0]
+                        segments_info = panoptic_r[1]
+                        segm_info = segments_info.copy()
+
+                        pred_np = panoptic_pred.detach().cpu().numpy()
+                        pred_img = Image.fromarray(pred_np.astype(np.uint8))
+                        save_dir_panoptic = os.path.join(self.save_dir, self.save_dir_name)
+
+                        pred_img.save(os.path.join(save_dir_panoptic, str(batched_inputs[0]['image_id']) + ".png"))
+                        with open(os.path.join(save_dir_panoptic, str(batched_inputs[0]['image_id']) + ".json"),
+                                  'w') as fp:
+                            json.dump(segm_info, fp)
                 
                 # instance segmentation inference
                 if self.instance_on:

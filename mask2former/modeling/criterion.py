@@ -65,10 +65,43 @@ def sigmoid_ce_loss(
     return loss.mean(1).sum() / num_masks
 
 
+def focal_loss(
+        inputs: torch.Tensor,
+        targets: torch.Tensor,
+        num_masks: float,
+    ):
+    """
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs. Stores the binary
+                 classification label for each element in inputs
+                (0 for the negative class and 1 for the positive class).
+    Returns:
+        Loss tensor
+    """
+    preds = torch.sigmoid(inputs)
+    loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+    alpha = 0.25
+    gamma = 2.
+
+    p_t = preds * targets + (1 - preds) * (1 - targets)
+    loss = loss * ((1 - p_t) ** gamma)
+
+    if alpha >= 0:
+        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+        loss = alpha_t * loss
+
+    return loss.mean(1).sum() / num_masks
+
+
 sigmoid_ce_loss_jit = torch.jit.script(
     sigmoid_ce_loss
 )  # type: torch.jit.ScriptModule
 
+focal_loss_jit = torch.jit.script(
+    focal_loss
+)  # type: torch.jit.ScriptModule
 
 def calculate_uncertainty(logits):
     """
@@ -95,7 +128,8 @@ class SetCriterion(nn.Module):
     """
 
     def __init__(self, num_classes, matcher, weight_dict, eos_coef, losses,
-                 num_points, oversample_ratio, importance_sample_ratio):
+                 num_points, oversample_ratio, importance_sample_ratio,
+                 apply_ibs, ibs_point_sampling, dataset, meta, num_dec_layers):
         """Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -119,7 +153,14 @@ class SetCriterion(nn.Module):
         self.oversample_ratio = oversample_ratio
         self.importance_sample_ratio = importance_sample_ratio
 
-    def loss_labels(self, outputs, targets, indices, num_masks):
+        # Parameters required for IBS
+        self.apply_ibs = apply_ibs
+        self.ibs_point_sampling = ibs_point_sampling
+        self.dataset = dataset
+        self.meta = meta
+        self.num_dec_layers = num_dec_layers
+
+    def loss_labels(self, outputs, targets, indices, num_masks, i=None):
         """Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
@@ -137,11 +178,15 @@ class SetCriterion(nn.Module):
         losses = {"loss_ce": loss_ce}
         return losses
     
-    def loss_masks(self, outputs, targets, indices, num_masks):
+    def loss_masks(self, outputs, targets, indices, num_masks, i=None):
         """Compute the losses related to the masks: the focal loss and the dice loss.
         targets dicts must contain the key "masks" containing a tensor of dim [nb_target_boxes, h, w]
         """
         assert "pred_masks" in outputs
+
+        ibs_in_outputs = True if "pred_masks_ibs" in outputs else False
+        if i is not None:
+            ibs_in_outputs = ibs_in_outputs and (i > 0)
 
         src_idx = self._get_src_permutation_idx(indices)
         tgt_idx = self._get_tgt_permutation_idx(indices)
@@ -157,6 +202,57 @@ class SetCriterion(nn.Module):
         # N x 1 x H x W
         src_masks = src_masks[:, None]
         target_masks = target_masks[:, None]
+
+        if src_masks.shape[0] == 0 and self.apply_ibs and ibs_in_outputs:
+            src_masks_ibs = outputs["pred_masks_ibs"]
+            src_masks_ibs = src_masks_ibs[src_idx]
+            src_masks_ibs_things = src_masks_ibs[:, None]
+            target_masks_ibs_things = target_masks
+
+        else:
+            if self.apply_ibs and ibs_in_outputs:
+                with torch.no_grad():
+                    thing_classes = torch.LongTensor(
+                        list(self.meta.thing_dataset_id_to_contiguous_id.values())).cuda().to(
+                        src_masks.device)
+
+                    # Retrieve GT class for each mask
+                    src_logits = outputs["pred_logits"].float()
+                    target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+                    target_classes = torch.full(
+                        src_logits.shape[:2], self.num_classes, dtype=torch.int64, device=src_masks.device
+                    )
+                    target_classes[src_idx] = target_classes_o
+                    target_classes = target_classes[src_idx]
+
+                    # Find binary mask for things classes
+                    target_classes_valid = torch.clone(target_classes.reshape([-1]))
+                    target_classes_valid[(target_classes_valid[..., None] != thing_classes).all(-1)] = 0
+                    target_classes_things = target_classes_valid > 0
+
+                # Retrieve predicted masks
+                src_masks_ibs = outputs["pred_masks_ibs"]
+                src_masks_ibs = src_masks_ibs[src_idx]
+                src_masks_ibs = src_masks_ibs[:, None]
+
+                # Keep only the predictions for things classes
+                src_masks_ibs = src_masks_ibs.reshape([src_masks.shape[0], -1])
+                src_masks_ibs_things = src_masks_ibs[target_classes_things]
+
+                if self.ibs_point_sampling:
+                    src_masks_ibs_things = src_masks_ibs_things.reshape([-1, 1, src_masks.shape[-2], src_masks.shape[-1]])
+
+                # Create ground truth in shape of predictions, with all zeros
+                with torch.no_grad():
+                    if self.ibs_point_sampling:
+                        target_masks_ibs_things = torch.zeros(src_masks_ibs_things.shape[0],
+                                                              self.num_points,
+                                                              dtype=torch.float32).cuda().to(src_masks_ibs.device)
+                    else:
+                        t_shape = target_masks.shape
+                        target_masks_ibs_things = torch.zeros(src_masks_ibs_things.shape[0],
+                                                              t_shape[2]//4 * t_shape[3]//4,
+                                                              dtype=torch.float32).cuda().to(src_masks_ibs.device)
 
         with torch.no_grad():
             # sample point_coords
@@ -180,13 +276,46 @@ class SetCriterion(nn.Module):
             align_corners=False,
         ).squeeze(1)
 
-        losses = {
-            "loss_mask": sigmoid_ce_loss_jit(point_logits, point_labels, num_masks),
-            "loss_dice": dice_loss_jit(point_logits, point_labels, num_masks),
-        }
+        if self.apply_ibs and self.ibs_point_sampling and ibs_in_outputs:
+            with torch.no_grad():
+                # sample point_coords
+                ibs_point_coords = get_uncertain_point_coords_with_randomness(
+                    src_masks_ibs_things,
+                    lambda logits: calculate_uncertainty(logits),
+                    self.num_points,
+                    self.oversample_ratio,
+                    self.importance_sample_ratio,
+                )
+                # print("sum point_labels", torch.sum(point_labels, dim=1))
+
+            src_masks_ibs_things = point_sample(
+                src_masks_ibs_things,
+                ibs_point_coords,
+                align_corners=False,
+            ).squeeze(1)
+
+        if self.apply_ibs and ibs_in_outputs:
+            if src_masks_ibs_things.shape[0] == 0:
+                loss_ibs = torch.sum(point_logits) * 0.
+            else:
+                loss_ibs = focal_loss_jit(src_masks_ibs_things,
+                                          target_masks_ibs_things,
+                                          src_masks_ibs_things.shape[0])
+
+            losses = {"loss_mask": sigmoid_ce_loss_jit(point_logits, point_labels, num_masks),
+                      "loss_dice": dice_loss_jit(point_logits, point_labels, num_masks),
+                      "loss_mask_ibs": loss_ibs}
+            del src_masks_ibs, src_masks_ibs_things
+            del target_masks_ibs_things
+        else:
+            losses = {
+                "loss_mask": sigmoid_ce_loss_jit(point_logits, point_labels, num_masks),
+                "loss_dice": dice_loss_jit(point_logits, point_labels, num_masks),
+            }
 
         del src_masks
         del target_masks
+
         return losses
 
     def _get_src_permutation_idx(self, indices):
@@ -201,13 +330,13 @@ class SetCriterion(nn.Module):
         tgt_idx = torch.cat([tgt for (_, tgt) in indices])
         return batch_idx, tgt_idx
 
-    def get_loss(self, loss, outputs, targets, indices, num_masks):
+    def get_loss(self, loss, outputs, targets, indices, num_masks, i=None):
         loss_map = {
             'labels': self.loss_labels,
             'masks': self.loss_masks,
         }
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
-        return loss_map[loss](outputs, targets, indices, num_masks)
+        return loss_map[loss](outputs, targets, indices, num_masks, i)
 
     def forward(self, outputs, targets):
         """This performs the loss computation.
@@ -233,14 +362,15 @@ class SetCriterion(nn.Module):
         # Compute all the requested losses
         losses = {}
         for loss in self.losses:
-            losses.update(self.get_loss(loss, outputs, targets, indices, num_masks))
+            i = self.num_dec_layers
+            losses.update(self.get_loss(loss, outputs, targets, indices, num_masks, i))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if "aux_outputs" in outputs:
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
                 indices = self.matcher(aux_outputs, targets)
                 for loss in self.losses:
-                    l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_masks)
+                    l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_masks, i)
                     l_dict = {k + f"_{i}": v for k, v in l_dict.items()}
                     losses.update(l_dict)
 

@@ -14,6 +14,10 @@ from .data.dataset_mappers.mask_former_instance_dataset_mapper import (
 from .data.dataset_mappers.mask_former_panoptic_dataset_mapper import (
     MaskFormerPanopticDatasetMapper,
 )
+
+from .data.dataset_mappers.mask_former_panoptic_dataset_mapper_cropsampling import (
+    MaskFormerPanopticDatasetMapperCropSampling,
+)
 from .data.dataset_mappers.mask_former_semantic_dataset_mapper import (
     MaskFormerSemanticDatasetMapper,
 )

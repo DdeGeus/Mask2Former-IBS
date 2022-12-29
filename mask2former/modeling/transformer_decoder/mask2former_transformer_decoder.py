@@ -1,11 +1,13 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 # Modified by Bowen Cheng from: https://github.com/facebookresearch/detr/blob/master/models/detr.py
+import os
 import logging
 import fvcore.nn.weight_init as weight_init
 from typing import Optional
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
+import numpy as np
 
 from detectron2.config import configurable
 from detectron2.layers import Conv2d
@@ -247,6 +249,7 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         pre_norm: bool,
         mask_dim: int,
         enforce_input_project: bool,
+        apply_ibs: bool,
     ):
         """
         NOTE: this interface is experimental.
@@ -264,6 +267,7 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             mask_dim: mask feature dimension
             enforce_input_project: add input project 1x1 conv even if input
                 channels and hidden dim is identical
+            apply_ibs: bool, whether to apply intra-batch supervision
         """
         super().__init__()
 
@@ -333,6 +337,9 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
         self.mask_embed = MLP(hidden_dim, hidden_dim, mask_dim, 3)
 
+        # NEW
+        self.apply_ibs = apply_ibs
+
     @classmethod
     def from_config(cls, cfg, in_channels, mask_classification):
         ret = {}
@@ -357,6 +364,7 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         ret["enforce_input_project"] = cfg.MODEL.MASK_FORMER.ENFORCE_INPUT_PROJ
 
         ret["mask_dim"] = cfg.MODEL.SEM_SEG_HEAD.MASK_DIM
+        ret["apply_ibs"] = cfg.MODEL.MASK_FORMER.APPLY_IBS
 
         return ret
 
@@ -387,11 +395,17 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
 
         predictions_class = []
         predictions_mask = []
+        predictions_mask_ibs = []
 
         # prediction heads on learnable query features
-        outputs_class, outputs_mask, attn_mask = self.forward_prediction_heads(output, mask_features, attn_mask_target_size=size_list[0])
+        apply_ibs = self.apply_ibs and self.training
+        outputs_class, outputs_mask, attn_mask, outputs_mask_ibs = self.forward_prediction_heads(output,
+                                                                                                 mask_features,
+                                                                                                 attn_mask_target_size=size_list[0],
+                                                                                                 apply_ibs=apply_ibs)
         predictions_class.append(outputs_class)
         predictions_mask.append(outputs_mask)
+        predictions_mask_ibs.append(outputs_mask_ibs)
 
         for i in range(self.num_layers):
             level_index = i % self.num_feature_levels
@@ -415,9 +429,14 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
                 output
             )
 
-            outputs_class, outputs_mask, attn_mask = self.forward_prediction_heads(output, mask_features, attn_mask_target_size=size_list[(i + 1) % self.num_feature_levels])
+            outputs_class, outputs_mask, attn_mask, outputs_mask_ibs = self.forward_prediction_heads(output,
+                                                                                                     mask_features,
+                                                                                                     attn_mask_target_size=size_list[(i + 1) % self.num_feature_levels],
+                                                                                                     apply_ibs=apply_ibs)
+
             predictions_class.append(outputs_class)
             predictions_mask.append(outputs_mask)
+            predictions_mask_ibs.append(outputs_mask_ibs)
 
         assert len(predictions_class) == self.num_layers + 1
 
@@ -425,17 +444,36 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             'pred_logits': predictions_class[-1],
             'pred_masks': predictions_mask[-1],
             'aux_outputs': self._set_aux_loss(
-                predictions_class if self.mask_classification else None, predictions_mask
+                predictions_class if self.mask_classification else None, predictions_mask, predictions_mask_ibs,
             )
         }
+
+        if self.apply_ibs and self.training:
+            out['pred_masks_ibs'] = predictions_mask_ibs[-1]
+
         return out
 
-    def forward_prediction_heads(self, output, mask_features, attn_mask_target_size):
+    def forward_prediction_heads(self, output, mask_features, attn_mask_target_size, apply_ibs=True):
         decoder_output = self.decoder_norm(output)
         decoder_output = decoder_output.transpose(0, 1)
         outputs_class = self.class_embed(decoder_output)
         mask_embed = self.mask_embed(decoder_output)
         outputs_mask = torch.einsum("bqc,bchw->bqhw", mask_embed, mask_features)
+
+        if apply_ibs and self.apply_ibs and self.training:
+            n = mask_embed.shape[0]
+            random_select = np.zeros((1, n))
+            for i in range(n):
+                random_select[:, i] = np.random.choice(np.delete(np.arange(n), i),
+                                                       1,
+                                                       replace=False)
+            random_select = np.reshape(random_select, -1)
+            mask_features_extra = mask_features[random_select]
+            mask_embed_extra = mask_embed
+            outputs_mask_ibs = torch.einsum("bqc,bchw->bqhw", mask_embed_extra, mask_features_extra)
+        else:
+            outputs_mask_ibs = None
+
 
         # NOTE: prediction is of higher-resolution
         # [B, Q, H, W] -> [B, Q, H*W] -> [B, h, Q, H*W] -> [B*h, Q, HW]
@@ -445,17 +483,23 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         attn_mask = (attn_mask.sigmoid().flatten(2).unsqueeze(1).repeat(1, self.num_heads, 1, 1).flatten(0, 1) < 0.5).bool()
         attn_mask = attn_mask.detach()
 
-        return outputs_class, outputs_mask, attn_mask
+        return outputs_class, outputs_mask, attn_mask, outputs_mask_ibs
 
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_seg_masks):
+    def _set_aux_loss(self, outputs_class, outputs_seg_masks, outputs_seg_masks_ibs):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
         if self.mask_classification:
-            return [
-                {"pred_logits": a, "pred_masks": b}
-                for a, b in zip(outputs_class[:-1], outputs_seg_masks[:-1])
-            ]
+            if self.apply_ibs and self.training:
+                return [
+                    {"pred_logits": a, "pred_masks": b, 'pred_masks_ibs': c}
+                    for a, b, c in zip(outputs_class[:-1], outputs_seg_masks[:-1], outputs_seg_masks_ibs[:-1])
+                ]
+            else:
+                return [
+                    {"pred_logits": a, "pred_masks": b}
+                    for a, b in zip(outputs_class[:-1], outputs_seg_masks[:-1])
+                ]
         else:
             return [{"pred_masks": b} for b in outputs_seg_masks[:-1]]

@@ -1,5 +1,5 @@
 # Mask2Former + Intra-Batch Supervision
-## [[Project page](https://ddegeus.github.io/intra-batch-supervision/)] [[Paper](#)]
+## [[Project page](https://ddegeus.github.io/intra-batch-supervision/)] [[Paper](https://openaccess.thecvf.com/content/WACV2023/html/de_Geus_Intra-Batch_Supervision_for_Panoptic_Segmentation_on_High-Resolution_Images_WACV_2023_paper.html)]
 
 Code for 'Intra-Batch Supervision for Panoptic Segmentation on High-Resolution Images', Daan de Geus and Gijs Dubbelman, WACV 2023.
 
